@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output
+dist/
+**/dist/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Runtime data
+uploads/
+**/uploads/
+*.log
+
+# Terraform
+**/.terraform/
+/terraform/jenkins-agent-key
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!*.example.tfvars
+!*.tfvars.example
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Tests
+**/test-results/
+**/.vitest/
+.vite/
+**/.vite/

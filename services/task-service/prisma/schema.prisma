@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TaskStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model Task {
+  id           String       @id
+  projectId    String
+  title        String
+  description  String?
+  status       TaskStatus   @default(TODO)
+  priority     TaskPriority @default(MEDIUM)
+  dueDate      DateTime?
+  assigneeId   String?
+  creatorId    String
+  parentTaskId String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  parentTask   Task?        @relation("Subtasks", fields: [parentTaskId], references: [id], onDelete: SetNull)
+  subtasks     Task[]       @relation("Subtasks")
+
+  @@index([projectId, status])
+  @@index([projectId, assigneeId])
+  @@index([parentTaskId])
+}
+
+model Board {
+  id        String        @id
+  projectId String        @unique
+  name      String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  columns   BoardColumn[]
+}
+
+model BoardColumn {
+  id        String      @id
+  boardId   String
+  name      String
+  status    TaskStatus
+  position  Int
+  board     Board       @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  items     BoardItem[]
+
+  @@unique([boardId, status])
+  @@index([boardId, position])
+}
+
+model BoardItem {
+  id        String      @id
+  columnId  String
+  taskId    String      @unique
+  position  Int
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+  column    BoardColumn @relation(fields: [columnId], references: [id], onDelete: Cascade)
+
+  @@index([columnId, position])
+}
+
+model Comment {
+  id         String   @id
+  taskId     String
+  projectId  String
+  authorId   String
+  authorName String
+  body       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([taskId, createdAt])
+  @@index([projectId])
+}
+
+model Attachment {
+  id           String   @id
+  taskId       String
+  projectId    String
+  uploaderId   String
+  originalName String
+  storedName   String   @unique
+  mimeType     String
+  size         Int
+  createdAt    DateTime @default(now())
+
+  @@index([taskId, createdAt])
+  @@index([projectId])
+}

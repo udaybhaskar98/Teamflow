@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service-deployment
+  namespace: teamflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notification-svc-pods
+  template:
+    metadata:
+      labels:
+        app: notification-svc-pods
+    spec:
+      initContainers:
+        # Run database migrations once before the application starts.
+        - name: migrate
+          image: bhaskaruday/teamflow-notification-service:v1
+          command: ["npx", "prisma", "migrate", "deploy"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: NOTIFICATION_DATABASE_URL
+      containers:
+        - name: notification-svc-container
+          image: bhaskaruday/teamflow-notification-service:v1
+          ports:
+            - containerPort: 4005
+          env:
+            - name: PORT
+              value: "4005"
+            - name: CORS_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: teamflow-configmap
+                  key: CORS_ORIGIN
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: JWT_SECRET
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: NOTIFICATION_DATABASE_URL
+            - name: PROJECT_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: teamflow-configmap
+                  key: PROJECT_SERVICE_URL
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: RABBITMQ_URL
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4005
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 4005
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+  namespace: teamflow
+spec:
+  selector:
+    app: notification-svc-pods
+  ports:
+    - port: 4005
+      targetPort: 4005
+  type: ClusterIP

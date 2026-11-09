@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: organization-service-deployment
+  namespace: teamflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: organization-svc-pods
+  template:
+    metadata:
+      labels:
+        app: organization-svc-pods
+    spec:
+      initContainers:
+        # Run database migrations once before the application starts.
+        - name: migrate
+          image: bhaskaruday/teamflow-organization-service:v1
+          command: ["npx", "prisma", "migrate", "deploy"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: ORGANIZATION_DATABASE_URL
+      containers:
+        - name: organization-svc-container
+          image: bhaskaruday/teamflow-organization-service:v1
+          ports:
+            - containerPort: 4002
+          env:
+            - name: PORT
+              value: "4002"
+            - name: CORS_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: teamflow-configmap
+                  key: CORS_ORIGIN
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: JWT_SECRET
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: ORGANIZATION_DATABASE_URL
+            - name: AUTH_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: teamflow-configmap
+                  key: AUTH_SERVICE_URL
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: RABBITMQ_URL
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 4002
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: organization-service
+  namespace: teamflow
+spec:
+  selector:
+    app: organization-svc-pods
+  ports:
+    - port: 4002
+      targetPort: 4002
+  type: ClusterIP

@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: task-service-deployment
+  namespace: teamflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: task-svc-pods
+  template:
+    metadata:
+      labels:
+        app: task-svc-pods
+    spec:
+      securityContext:
+        fsGroup: 999
+      initContainers:
+        # Run database migrations once before the application starts.
+        - name: migrate
+          image: bhaskaruday/teamflow-task-service:v1
+          command: ["npx", "prisma", "migrate", "deploy"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: TASK_DATABASE_URL
+      containers:
+        - name: task-svc-container
+          image: bhaskaruday/teamflow-task-service:v1
+          ports:
+            - containerPort: 4004
+          env:
+            - name: PORT
+              value: "4004"
+            - name: CORS_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: teamflow-configmap
+                  key: CORS_ORIGIN
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: JWT_SECRET
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: TASK_DATABASE_URL
+            - name: ORGANIZATION_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: teamflow-configmap
+                  key: ORGANIZATION_SERVICE_URL
+            - name: PROJECT_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: teamflow-configmap
+                  key: PROJECT_SERVICE_URL
+            - name: RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: teamflow-secret
+                  key: RABBITMQ_URL
+            - name: STORAGE_DRIVER
+              value: "local"
+            - name: UPLOAD_DIR
+              value: "/app/uploads"
+            - name: MAX_UPLOAD_BYTES
+              value: "10485760"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4004
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 4004
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: task-uploads
+              mountPath: /app/uploads
+      volumes:
+        - name: task-uploads
+          persistentVolumeClaim:
+            claimName: task-uploads
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: task-service
+  namespace: teamflow
+spec:
+  selector:
+    app: task-svc-pods
+  ports:
+    - port: 4004
+      targetPort: 4004
+  type: ClusterIP

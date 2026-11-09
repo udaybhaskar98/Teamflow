@@ -1,0 +1,220 @@
+# TeamFlow local stack: PostgreSQL + RabbitMQ + 5 backend services + frontend.
+# Each backend service owns one PostgreSQL schema and exposes a REST API.
+name: teamflow
+
+# Shared by every backend service; service-specific values are added below.
+x-common-env: &common-env
+  NODE_ENV: ${NODE_ENV:-development}
+  JWT_SECRET: ${JWT_SECRET:-replace-with-a-long-random-development-secret}
+  JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-1h}
+  CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173}
+  BCRYPT_ROUNDS: ${BCRYPT_ROUNDS:-12}
+  SERVICE_REQUEST_TIMEOUT_MS: ${SERVICE_REQUEST_TIMEOUT_MS:-5000}
+  AUTH_SERVICE_URL: http://auth-service:4001
+  ORGANIZATION_SERVICE_URL: http://organization-service:4002
+  PROJECT_SERVICE_URL: http://project-service:4003
+
+services:
+  # Shared PostgreSQL. The init script creates one schema per service.
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-teamflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-teamflow_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-teamflow}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/001-schemas.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-teamflow} -d ${POSTGRES_DB:-teamflow}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Event bus used for notifications and the project activity feed.
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-teamflow}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-teamflow_dev_password}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Auth + user profiles. Owns the auth schema.
+  auth-service:
+    build:
+      context: ./services/auth-service
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      PORT: 4001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-teamflow}:${POSTGRES_PASSWORD:-teamflow_dev_password}@postgres:5432/${POSTGRES_DB:-teamflow}?schema=auth
+    ports:
+      - "${AUTH_PORT:-4001}:4001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Apply this service's migrations, then start the compiled server.
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Organizations and memberships. Calls auth-service for user lookup.
+  organization-service:
+    build:
+      context: ./services/organization-service
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      PORT: 4002
+      DATABASE_URL: postgresql://${POSTGRES_USER:-teamflow}:${POSTGRES_PASSWORD:-teamflow_dev_password}@postgres:5432/${POSTGRES_DB:-teamflow}?schema=organization
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-teamflow}:${RABBITMQ_DEFAULT_PASS:-teamflow_dev_password}@rabbitmq:5672
+    ports:
+      - "${ORGANIZATION_PORT:-4002}:4002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    # Apply this service's migrations, then start the compiled server.
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Projects and project access. Calls organization-service for membership.
+  project-service:
+    build:
+      context: ./services/project-service
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      PORT: 4003
+      DATABASE_URL: postgresql://${POSTGRES_USER:-teamflow}:${POSTGRES_PASSWORD:-teamflow_dev_password}@postgres:5432/${POSTGRES_DB:-teamflow}?schema=project
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-teamflow}:${RABBITMQ_DEFAULT_PASS:-teamflow_dev_password}@rabbitmq:5672
+    ports:
+      - "${PROJECT_PORT:-4003}:4003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      organization-service:
+        condition: service_healthy
+    # Apply this service's migrations, then start the compiled server.
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4003/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Tasks, boards, comments, and attachment metadata. Calls project/org services.
+  task-service:
+    build:
+      context: ./services/task-service
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      PORT: 4004
+      DATABASE_URL: postgresql://${POSTGRES_USER:-teamflow}:${POSTGRES_PASSWORD:-teamflow_dev_password}@postgres:5432/${POSTGRES_DB:-teamflow}?schema=task
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-teamflow}:${RABBITMQ_DEFAULT_PASS:-teamflow_dev_password}@rabbitmq:5672
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_KEY_PREFIX: ${S3_KEY_PREFIX:-attachments/}
+    ports:
+      - "${TASK_PORT:-4004}:4004"
+    volumes:
+      - task_uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      organization-service:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+    # Apply this service's migrations, then start the compiled server.
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4004/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Notifications and activity feed. Consumes RabbitMQ events.
+  notification-service:
+    build:
+      context: ./services/notification-service
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      PORT: 4005
+      DATABASE_URL: postgresql://${POSTGRES_USER:-teamflow}:${POSTGRES_PASSWORD:-teamflow_dev_password}@postgres:5432/${POSTGRES_DB:-teamflow}?schema=notification
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-teamflow}:${RABBITMQ_DEFAULT_PASS:-teamflow_dev_password}@rabbitmq:5672
+    ports:
+      - "${NOTIFICATION_PORT:-4005}:4005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      project-service:
+        condition: service_healthy
+    # Apply this service's migrations, then start the compiled server.
+    command: ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4005/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  # Static React build served by nginx. API URLs are baked in at build time.
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /
+        VITE_AUTH_API_URL: ""
+        VITE_ORGANIZATION_API_URL: ""
+        VITE_PROJECT_API_URL: ""
+        VITE_TASK_API_URL: ""
+        VITE_NOTIFICATION_API_URL: ""
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:8080"
+
+volumes:
+  postgres_data:
+  rabbitmq_data:
+  task_uploads:

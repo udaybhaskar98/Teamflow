@@ -1,0 +1,39 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Notification {
+  id         String    @id
+  userId     String
+  type       String
+  title      String
+  message    String
+  entityType String
+  entityId   String
+  projectId  String?
+  eventId    String
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([eventId, userId])
+  @@index([userId, readAt, createdAt])
+}
+
+model Activity {
+  id        String   @id
+  projectId String
+  eventId   String   @unique
+  type      String
+  actorId   String
+  actorName String
+  message   String
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([projectId, createdAt])
+}

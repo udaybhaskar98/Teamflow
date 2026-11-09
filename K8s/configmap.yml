@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: teamflow-configmap
+  namespace: teamflow
+data:
+  POSTGRES_USER: teamflow
+  POSTGRES_DB: teamflowdb
+  CORS_ORIGIN: http://localhost:5173
+  AUTH_SERVICE_URL: http://auth-service:4001
+  ORGANIZATION_SERVICE_URL: http://organization-service:4002
+  PROJECT_SERVICE_URL: http://project-service:4003
+  TASK_SERVICE_URL: http://task-service:4004
+  NOTIFICATION_SERVICE_URL: http://notification-service:4005
+  # PostgreSQL runs this only when the data directory is first created.
+  init.sql: |
+    CREATE SCHEMA IF NOT EXISTS auth;
+    CREATE SCHEMA IF NOT EXISTS organization;
+    CREATE SCHEMA IF NOT EXISTS project;
+    CREATE SCHEMA IF NOT EXISTS task;
+    CREATE SCHEMA IF NOT EXISTS notification;

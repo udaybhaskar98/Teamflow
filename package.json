@@ -1,0 +1,17 @@
+{
+  "name": "teamflow",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TeamFlow microservices project management platform",
+  "scripts": {
+    "install:all": "node scripts/install-all.mjs",
+    "typecheck": "node scripts/run-all.mjs typecheck",
+    "test": "node scripts/run-all.mjs test",
+    "build": "node scripts/run-all.mjs build",
+    "docker:up": "docker compose up --build -d",
+    "docker:down": "docker compose down",
+    "docker:reset": "docker compose down -v",
+    "docker:logs": "docker compose logs -f --tail=100",
+    "docker:ps": "docker compose ps"
+  }
+}
